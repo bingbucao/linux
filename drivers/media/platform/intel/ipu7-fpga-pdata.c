@@ -22,7 +22,7 @@ static struct ipu7_isys_subdev_info ov13b10_sd_0 = {
 	.board_info = {
 		I2C_BOARD_INFO("ov13b10", OV13B10_I2C_ADDRESS),
 	},
-	.i2c_adapter_id = 13,
+	.i2c_adapter_id = 0,
 	}
 };
 
@@ -37,7 +37,7 @@ static struct ipu7_isys_subdev_info ov13b10_sd_1 = {
 	.board_info = {
 		I2C_BOARD_INFO("ov13b10", OV13B10_I2C_ADDRESS),
 	},
-	.i2c_adapter_id = 14,
+	.i2c_adapter_id = 1,
 	}
 };
 
@@ -57,3 +57,4 @@ static void ipu7_quirk(struct pci_dev *pci_dev)
 
 DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, IPU7_PCI_ID, ipu7_quirk);
 DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, IPU7P5_PCI_ID, ipu7_quirk);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, IPU8_PCI_ID, ipu7_quirk);
