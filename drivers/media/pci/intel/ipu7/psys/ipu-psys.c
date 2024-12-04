@@ -519,7 +519,7 @@ static int ipu7_psys_release(struct inode *inode, struct file *file)
 	mutex_destroy(&fh->mutex);
 	kfree(fh);
 
-	pm_runtime_put(&psys->adev->auxdev.dev);
+	pm_runtime_put_sync(&psys->adev->auxdev.dev);
 
 	return 0;
 }
@@ -1533,7 +1533,6 @@ static irqreturn_t psys_isr_threaded(struct ipu7_bus_device *adev)
 
 	state = ipu7_boot_get_boot_state(adev);
 	if (IA_GOFO_FW_BOOT_STATE_IS_CRITICAL(state)) {
-		//TODO: Add log parser
 		dev_warn(&psys->dev, "error state %u\n", state);
 	} else {
 		status = readl(base + IPU_REG_PSYS_TO_SW_IRQ_CNTL_STATUS);

@@ -117,7 +117,7 @@ static void csi2_irq_en(struct ipu7_isys_csi2 *csi2, bool enable)
 		writel(0, csi2->base + offset + IRQ_CTL_MASK);
 		writel(0, csi2->base + offset + IRQ_CTL_ENABLE);
 
-		if (!is_ipu7(isp->hw_ver)) {
+		if (is_ipu7p5(isp->hw_ver)) {
 			writel(mask, csi2->base + offset + IRQ1_CTL_CLEAR);
 			writel(0, csi2->base + offset + IRQ1_CTL_MASK);
 			writel(0, csi2->base + offset + IRQ1_CTL_ENABLE);
@@ -141,7 +141,7 @@ static void csi2_irq_en(struct ipu7_isys_csi2 *csi2, bool enable)
 	writel(mask, csi2->base + offset + IRQ_CTL_ENABLE);
 
 	mask = IPU7P5_CSI_RX_SYNC_FE_IRQ_MASK;
-	if (!is_ipu7(isp->hw_ver)) {
+	if (is_ipu7p5(isp->hw_ver)) {
 		writel(mask, csi2->base + offset + IRQ1_CTL_CLEAR);
 		writel(mask, csi2->base + offset + IRQ1_CTL_MASK);
 		writel(mask, csi2->base + offset + IRQ1_CTL_ENABLE);
@@ -162,7 +162,7 @@ static void ipu7_isys_csi2_disable_stream(struct ipu7_isys_csi2 *csi2)
 	offset = IS_IO_GPREGS_BASE;
 	val = readl(isys_base + offset + CSI_PORT_CLK_GATE);
 	val &= ~(1 << port);
-	if (port == 0 && nlanes == 4 && !is_ipu7(isys->adev->isp->hw_ver))
+	if (port == 0 && nlanes == 4 && is_ipu7p5(isys->adev->isp->hw_ver))
 		val &= ~BIT(1);
 	writel(val, isys_base + offset + CSI_PORT_CLK_GATE);
 
@@ -191,7 +191,7 @@ static int ipu7_isys_csi2_enable_stream(struct ipu7_isys_csi2 *csi2)
 	dev_dbg(dev, "port %u CLK_GATE = 0x%04x DIV_FACTOR_APB_CLK=0x%04x\n",
 		port, readl(isys_base + offset + CSI_PORT_CLK_GATE),
 		readl(isys_base + offset + CLK_DIV_FACTOR_APB_CLK));
-	if (port == 0 && nlanes == 4 && !is_ipu7(isys->adev->isp->hw_ver)) {
+	if (port == 0 && nlanes == 4 && is_ipu7p5(isys->adev->isp->hw_ver)) {
 		dev_info(dev, "CSI port %u in aggregation mode\n", port);
 		writel(0x1, isys_base + offset + CSI_PORTAB_AGGREGATION);
 	}
@@ -434,7 +434,7 @@ int ipu7_isys_csi2_init(struct ipu7_isys_csi2 *csi2,
 	csi2->base = base;
 	csi2->port = index;
 
-	if (!is_ipu7(isys->adev->isp->hw_ver))
+	if (is_ipu7p5(isys->adev->isp->hw_ver))
 		csi2->legacy_irq_mask = 0x7 << (index * 3);
 	else
 		csi2->legacy_irq_mask = 0x3 << (index * 2);

@@ -573,7 +573,7 @@ int ipu_buttress_start_tsc_sync(struct ipu7_device *isp)
 	if (is_ipu8(isp->hw_ver))
 		return 0;
 
-	if (!is_ipu7(isp->hw_ver)) {
+	if (is_ipu7p5(isp->hw_ver)) {
 		val = readl(base + BUTTRESS_REG_TSC_CTL);
 		val |= BUTTRESS_SEL_PB_TIMESTAMP;
 		writel(val, base + BUTTRESS_REG_TSC_CTL);
@@ -681,7 +681,7 @@ static void ipu_buttress_setup(struct ipu7_device *isp)
 	else
 		writel(0x100, isp->pb_base + BAR2_MISC_CONFIG);
 
-	if (!is_ipu7(isp->hw_ver)) {
+	if (is_ipu7p5(isp->hw_ver)) {
 		writel(BIT(14), isp->pb_base + TLBID_HASH_ENABLE_63_32);
 		writel(BIT(9), isp->pb_base + TLBID_HASH_ENABLE_95_64);
 		dev_dbg(dev, "PTL TLBID_HASH %x %x\n",

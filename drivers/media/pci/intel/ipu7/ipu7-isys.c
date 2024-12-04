@@ -1239,7 +1239,7 @@ static void ipu7_isys_csi2_isr(struct ipu7_isys_csi2 *csi2)
 	writel(sync, csi2->base + offset + IRQ_CTL_CLEAR);
 	dev_dbg(dev, "csi2-%u sync status 0x%08x\n", csi2->port, sync);
 
-	if (!is_ipu7(isp->hw_ver)) {
+	if (is_ipu7p5(isp->hw_ver)) {
 		fe = readl(csi2->base + offset + IRQ1_CTL_STATUS);
 		writel(fe, csi2->base + offset + IRQ1_CTL_CLEAR);
 		dev_dbg(dev, "csi2-%u FE status 0x%08x\n", csi2->port, fe);
@@ -1251,7 +1251,7 @@ static void ipu7_isys_csi2_isr(struct ipu7_isys_csi2 *csi2)
 		if (!s)
 			continue;
 
-		if (!is_ipu7(isp->hw_ver)) {
+		if (is_ipu7p5(isp->hw_ver)) {
 			if (sync & IPU7P5_CSI_RX_SYNC_FS_VC & (1 << vc))
 				ipu7_isys_csi2_sof_event_by_stream(s);
 

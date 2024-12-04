@@ -449,7 +449,6 @@ static int ipu7_isys_fw_pin_cfg(struct ipu7_isys_video *av,
 	output_pin->binning_factor = 0;
 	/* stupid setting, even unused, SW still need to set a valid value */
 	output_pin->cfa_dim = IPU_INSYS_CFA_DIM_2x2;
-
 	/* frame format type */
 	pfmt = ipu7_isys_get_isys_format(av->pix_fmt.pixelformat);
 	output_pin->ft = (u16)pfmt->css_pixelformat;

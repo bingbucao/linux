@@ -211,7 +211,6 @@ static void ipu7_isys_buf_to_fw_frame_buf_pin(struct vb2_buffer *vb,
 					      struct ipu7_insys_buffset *set)
 {
 	struct ipu7_isys_queue *aq = vb2_queue_to_isys_queue(vb->vb2_queue);
-
 	set->output_pins[aq->fw_output].pin_payload.addr =
 		vb2_dma_contig_plane_dma_addr(vb, 0);
 	set->output_pins[aq->fw_output].pin_payload.user_token = (uintptr_t)set;

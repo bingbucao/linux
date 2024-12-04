@@ -334,7 +334,6 @@ void ipu7_fw_isys_dump_stream_cfg(struct device *dev,
 			cfg->output_pins[i].dpcm.type);
 		dev_dbg(dev, "\t.dpcm.predictor = %d\n",
 			cfg->output_pins[i].dpcm.predictor);
-
 		dev_dbg(dev, "\t.upipe_enable = %d\n",
 			cfg->output_pins[i].upipe_enable);
 		dev_dbg(dev, "\t.upipe_pin_cfg.opaque_pin_cfg = %d\n",

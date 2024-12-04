@@ -357,7 +357,6 @@ struct ipu7_insys_capture_output_pin_cfg {
 	struct ipu7_insys_capture_output_pin_payload pin_payload;
 	ia_gofo_addr_t upipe_capture_cfg;
 };
-
 struct ipu7_insys_output_pin {
 	struct ipu7_insys_output_link link;
 	struct ipu7_insys_output_cropping crop;
