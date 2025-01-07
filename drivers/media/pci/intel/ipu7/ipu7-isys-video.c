@@ -449,6 +449,7 @@ static int ipu7_isys_fw_pin_cfg(struct ipu7_isys_video *av,
 	output_pin->binning_factor = 0;
 	/* stupid setting, even unused, SW still need to set a valid value */
 	output_pin->cfa_dim = IPU_INSYS_CFA_DIM_2x2;
+
 	/* frame format type */
 	pfmt = ipu7_isys_get_isys_format(av->pix_fmt.pixelformat);
 	output_pin->ft = (u16)pfmt->css_pixelformat;
@@ -782,8 +783,14 @@ ipu7_isys_query_stream_by_source(struct ipu7_isys *isys, int source, u8 vc)
 	unsigned long flags;
 	unsigned int i;
 
-	if (!isys || source < 0)
+	if (!isys)
 		return NULL;
+
+	if (source < 0) {
+		dev_err(&isys->adev->auxdev.dev,
+			"query stream with invalid port number\n");
+		return NULL;
+	}
 
 	spin_lock_irqsave(&isys->streams_lock, flags);
 	for (i = 0; i < IPU_ISYS_MAX_STREAMS; i++) {

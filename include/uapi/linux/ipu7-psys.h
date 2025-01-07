@@ -71,6 +71,9 @@ struct ipu_psys_buffer {
 #define MAX_GRAPH_NODE_PROFILES		1U
 #define MAX_GRAPH_LINKS			10U
 #define MAX_GRAPH_TERMINALS		32U
+#ifdef IPU_PSYS_FRAGMENT
+#define MAX_FRAGMENT_COUNT		4
+#endif
 
 /**
  * Settings per node on the bitmap
@@ -112,6 +115,7 @@ struct node_ternimal {
  * @num_terms:		Number of enabled terms in the node
  * @profiles:		bitmap settings on the node
  * @terminals:		terminal info on the node
+ * @num_frags:		Number of fragments
  */
 struct graph_node {
 	uint8_t node_rsrc_id;
@@ -119,6 +123,9 @@ struct graph_node {
 	uint8_t num_terms;
 	struct node_profile profiles[MAX_GRAPH_NODE_PROFILES];
 	struct node_ternimal terminals[MAX_GRAPH_TERMINALS];
+#ifdef IPU_PSYS_FRAGMENT
+	uint8_t num_frags;
+#endif
 } __attribute__ ((packed));
 
 /**
@@ -313,6 +320,22 @@ struct ipu_psys_term_buffers {
 	struct ipu_psys_buffer term_buf;
 } __attribute__ ((packed));
 
+#ifdef IPU_PSYS_FRAGMENT
+/*
+ * struct ipu_psys_frag_buffers
+ *
+ * Descprion of fragment buffer information
+ *
+ * @frag_id:           fragment id of the buffer
+ * @term_buf_count:    the number of terminal buffers
+ * @task_buffers:      terminal buffers on the task request
+ */
+struct ipu_psys_frag_buffers {
+	uint8_t frag_id;
+	uint8_t term_buf_count;
+	struct ipu_psys_term_buffers __user *task_buffers;
+} __attribute__ ((packed));
+#endif
 /**
  * struct ipu_psys_task_request
  *
@@ -326,6 +349,8 @@ struct ipu_psys_term_buffers {
  * @payload_reuse_bm:	Any terminal marked here must be enabled
  * @term_buf_count:	the number of terminal buffers
  * @task_buffers:	terminal buffers on the task request
+ * @num_frags:         the number of fragments
+ * @frag_buffers:      the buffer information of fragments
  */
 struct ipu_psys_task_request {
 	uint8_t graph_id;
@@ -334,6 +359,10 @@ struct ipu_psys_task_request {
 	uint32_t payload_reuse_bm[2];
 	uint8_t term_buf_count;
 	struct ipu_psys_term_buffers __user *task_buffers;
+#ifdef IPU_PSYS_FRAGMENT
+	uint8_t num_frags;
+	struct ipu_psys_frag_buffers frag_buffers[MAX_FRAGMENT_COUNT];
+#endif
 } __attribute__ ((packed));
 
 #define IPU_BUFFER_FLAG_INPUT	(1 << 0)

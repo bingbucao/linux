@@ -26,6 +26,7 @@
 #include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/types.h>
+#include <linux/version.h>
 
 #include <media/ipu-bridge.h>
 #include <media/media-entity.h>
@@ -39,6 +40,7 @@
 #include "ipu7-bus.h"
 #include "ipu7-buttress-regs.h"
 #include "ipu7-cpd.h"
+#include "ipu7-dma.h"
 #include "ipu7-fw-isys.h"
 #include "ipu7-mmu.h"
 #include "ipu7-isys.h"
@@ -664,17 +666,16 @@ static void isys_remove(struct auxiliary_device *auxdev)
 
 	if (adev->isp->ipu7_dir)
 		debugfs_remove_recursive(isys->debugfsdir);
-
 	for (int i = 0; i < IPU_ISYS_MAX_STREAMS; i++)
 		mutex_destroy(&isys->streams[i].mutex);
 
 	list_for_each_entry_safe(fwmsg, safe, &isys->framebuflist, head)
-		dma_free_attrs(&auxdev->dev, sizeof(struct isys_fw_msgs),
-			       fwmsg, fwmsg->dma_addr, 0);
+		ipu7_dma_free(adev, sizeof(struct isys_fw_msgs),
+			      fwmsg, fwmsg->dma_addr, 0);
 
 	list_for_each_entry_safe(fwmsg, safe, &isys->framebuflist_fw, head)
-		dma_free_attrs(&auxdev->dev, sizeof(struct isys_fw_msgs),
-			       fwmsg, fwmsg->dma_addr, 0);
+		ipu7_dma_free(adev, sizeof(struct isys_fw_msgs),
+			      fwmsg, fwmsg->dma_addr, 0);
 
 	isys_unregister_devices(isys);
 
@@ -756,15 +757,15 @@ err:
 
 static int alloc_fw_msg_bufs(struct ipu7_isys *isys, int amount)
 {
-	struct device *dev = &isys->adev->auxdev.dev;
+	struct ipu7_bus_device *adev = isys->adev;
 	struct isys_fw_msgs *addr;
 	dma_addr_t dma_addr;
 	unsigned long flags;
 	unsigned int i;
 
 	for (i = 0; i < amount; i++) {
-		addr = dma_alloc_attrs(dev, sizeof(struct isys_fw_msgs),
-				       &dma_addr, GFP_KERNEL, 0);
+		addr = ipu7_dma_alloc(adev, sizeof(struct isys_fw_msgs),
+				      &dma_addr, GFP_KERNEL, 0);
 		if (!addr)
 			break;
 		addr->dma_addr = dma_addr;
@@ -783,8 +784,8 @@ static int alloc_fw_msg_bufs(struct ipu7_isys *isys, int amount)
 					struct isys_fw_msgs, head);
 		list_del(&addr->head);
 		spin_unlock_irqrestore(&isys->listlock, flags);
-		dma_free_attrs(dev, sizeof(struct isys_fw_msgs),
-			       addr, addr->dma_addr, 0);
+		ipu7_dma_free(adev, sizeof(struct isys_fw_msgs),
+			      addr, addr->dma_addr, 0);
 		spin_lock_irqsave(&isys->listlock, flags);
 	}
 	spin_unlock_irqrestore(&isys->listlock, flags);
@@ -1239,7 +1240,7 @@ static void ipu7_isys_csi2_isr(struct ipu7_isys_csi2 *csi2)
 	writel(sync, csi2->base + offset + IRQ_CTL_CLEAR);
 	dev_dbg(dev, "csi2-%u sync status 0x%08x\n", csi2->port, sync);
 
-	if (is_ipu7p5(isp->hw_ver)) {
+	if (!is_ipu7(isp->hw_ver)) {
 		fe = readl(csi2->base + offset + IRQ1_CTL_STATUS);
 		writel(fe, csi2->base + offset + IRQ1_CTL_CLEAR);
 		dev_dbg(dev, "csi2-%u FE status 0x%08x\n", csi2->port, fe);
@@ -1251,7 +1252,7 @@ static void ipu7_isys_csi2_isr(struct ipu7_isys_csi2 *csi2)
 		if (!s)
 			continue;
 
-		if (is_ipu7p5(isp->hw_ver)) {
+		if (!is_ipu7(isp->hw_ver)) {
 			if (sync & IPU7P5_CSI_RX_SYNC_FS_VC & (1 << vc))
 				ipu7_isys_csi2_sof_event_by_stream(s);
 

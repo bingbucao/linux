@@ -23,7 +23,7 @@
  * Each event from FW will be first queued into a
  * event queue, define the queue depth here
  */
-#define MAX_TASK_EVENT_QUEUE_SIZE		3
+#define TASK_EVENT_QUEUE_SIZE			3
 /**
  * Each task queue from user will be first queued into
  * a task queue, define the queue depth here
@@ -67,7 +67,8 @@ struct ipu_psys_task_ack {
 	u8 graph_id; /* graph id of the task request */
 	u8 node_ctx_id; /* logical node id */
 	u8 frame_id; /* frame id of the original task request */
-	u8 available; /* if the task ack slot can be used */
+
+	struct list_head list;
 
 	u32 err_code; /* error indication to user */
 };
@@ -83,13 +84,10 @@ struct ipu7_psys_stream {
 
 	u8 graph_id; /* graph_id on this stream */
 
-	/* Serialize task done queue */
+	/* Handle events from FW */
 	struct mutex event_mutex;
-	/* current event queue write index, incremental */
-	u32 event_write_index;
-	/* current event queue read index, incremental */
-	u32 event_read_index;
-	struct ipu_psys_task_ack event_queue[MAX_TASK_EVENT_QUEUE_SIZE];
+	struct list_head event_list; /* Reserved event list */
+	struct list_head ack_list; /* Received ack from FW */
 
 	/* Serialize task queue */
 	struct mutex task_mutex;

@@ -12,6 +12,7 @@
 
 #include "ipu7-boot.h"
 #include "ipu7-bus.h"
+#include "ipu7-dma.h"
 #include "ipu7-fw-psys.h"
 #include "ipu7-syscom.h"
 #include "ipu7-psys.h"
@@ -83,8 +84,8 @@ int ipu7_fw_psys_init(struct ipu7_psys *psys)
 	}
 
 	/* Allocate PSYS subsys config. */
-	psys_config = dma_alloc_attrs(dev, sizeof(struct ipu7_psys_config),
-				      &psys_config_dma_addr, GFP_KERNEL, 0);
+	psys_config = ipu7_dma_alloc(adev, sizeof(struct ipu7_psys_config),
+				     &psys_config_dma_addr, GFP_KERNEL, 0);
 	if (!psys_config) {
 		dev_err(dev, "Failed to allocate psys subsys config.\n");
 		ipu7_fw_psys_release(psys);
@@ -113,10 +114,9 @@ void ipu7_fw_psys_release(struct ipu7_psys *psys)
 
 	ipu7_boot_release_boot_config(adev);
 	if (psys->subsys_config) {
-		dma_free_attrs(&adev->auxdev.dev,
-			       sizeof(struct ipu7_psys_config),
-			       psys->subsys_config,
-			       psys->subsys_config_dma_addr, 0);
+		ipu7_dma_free(adev, sizeof(struct ipu7_psys_config),
+			      psys->subsys_config,
+			      psys->subsys_config_dma_addr, 0);
 		psys->subsys_config = NULL;
 		psys->subsys_config_dma_addr = 0;
 	}
@@ -301,6 +301,7 @@ static bool ipu7_fw_psys_build_node(const struct graph_node *node,
 	u16 buf_size = sizeof(*msg_node);
 	bool ret = false;
 	u8 i = 0;
+	u8 max_terms = 0;
 
 	memset(msg_node, 0, sizeof(*msg_node));
 	/**
@@ -325,7 +326,11 @@ static bool ipu7_fw_psys_build_node(const struct graph_node *node,
 
 	msg_node->node_rsrc_id = node->node_rsrc_id;
 	msg_node->node_ctx_id = node->node_ctx_id;
-	msg_node->num_frags = 1; /* No fragment support */
+#ifdef IPU_PSYS_FRAGMENT
+	msg_node->num_frags = node->num_frags;
+#else
+	msg_node->num_frags = 1;
+#endif
 
 	*buf_ptr_ptr += buf_size;
 
@@ -341,7 +346,8 @@ static bool ipu7_fw_psys_build_node(const struct graph_node *node,
 	msg_node->terms_list.head_offset =
 		(u16)((uintptr_t)*buf_ptr_ptr -
 		      (uintptr_t)&msg_node->terms_list);
-	for (i = 0; i < ARRAY_SIZE(node->terminals) && i < node->num_terms; i++) {
+	max_terms = ARRAY_SIZE(node->terminals);
+	for (i = 0; i < max_terms && i < node->num_terms; i++) {
 		ret = ipu7_fw_psys_build_node_term(&node->terminals[i],
 						   buf_ptr_ptr);
 		if (ret)

@@ -11,6 +11,7 @@
 #include <linux/iopoll.h>
 #include <linux/string.h>
 #include <linux/types.h>
+#include <linux/version.h>
 
 #include "abi/ipu7_fw_boot_abi.h"
 
@@ -18,6 +19,7 @@
 #include "ipu7-boot.h"
 #include "ipu7-bus.h"
 #include "ipu7-buttress-regs.h"
+#include "ipu7-dma.h"
 #include "ipu7-platform-regs.h"
 #include "ipu7-syscom.h"
 
@@ -223,9 +225,9 @@ int ipu7_boot_init_boot_config(struct ipu7_bus_device *adev,
 	/* Allocate boot config. */
 	adev->boot_config_size =
 		sizeof(*cfgs) * num_queues + sizeof(*boot_config);
-	adev->boot_config = dma_alloc_attrs(dev, adev->boot_config_size,
-					    &adev->boot_config_dma_addr,
-					    GFP_KERNEL, 0);
+	adev->boot_config = ipu7_dma_alloc(adev, adev->boot_config_size,
+					   &adev->boot_config_dma_addr,
+					   GFP_KERNEL, 0);
 	if (!adev->boot_config) {
 		dev_err(dev, "Failed to allocate boot config.\n");
 		return -ENOMEM;
@@ -236,14 +238,16 @@ int ipu7_boot_init_boot_config(struct ipu7_bus_device *adev,
 	init_boot_config(boot_config, adev->boot_config_size, major);
 	boot_config->subsys_config = subsys_config;
 
-	boot_config->uc_tile_frequency_mhz = uc_freq;
+	boot_config->uc_tile_frequency = uc_freq;
+	boot_config->uc_tile_frequency_units =
+		IA_GOFO_FW_BOOT_UC_FREQUENCY_UNITS_MHZ;
 	boot_config->syscom_context_config.max_output_queues =
 		syscom->num_output_queues;
 	boot_config->syscom_context_config.max_input_queues =
 		syscom->num_input_queues;
 
-	dma_sync_single_for_device(dev, adev->boot_config_dma_addr,
-				   adev->boot_config_size, DMA_TO_DEVICE);
+	ipu7_dma_sync_single(adev, adev->boot_config_dma_addr,
+			     adev->boot_config_size);
 
 	for (i = 0; i < num_queues; i++) {
 		u32 queue_size = qconfigs[i].max_capacity *
@@ -256,9 +260,9 @@ int ipu7_boot_init_boot_config(struct ipu7_bus_device *adev,
 	}
 
 	/* Allocate queue memory */
-	syscom->queue_mem = dma_alloc_attrs(dev, total_queue_size_aligned,
-					    &syscom->queue_mem_dma_addr,
-					    GFP_KERNEL, 0);
+	syscom->queue_mem = ipu7_dma_alloc(adev, total_queue_size_aligned,
+					   &syscom->queue_mem_dma_addr,
+					   GFP_KERNEL, 0);
 	if (!syscom->queue_mem) {
 		dev_err(dev, "Failed to allocate queue memory.\n");
 		return -ENOMEM;
@@ -278,8 +282,8 @@ int ipu7_boot_init_boot_config(struct ipu7_bus_device *adev,
 		queue_mem_ptr += qconfigs[i].queue_size;
 	}
 
-	dma_sync_single_for_device(dev, syscom->queue_mem_dma_addr,
-				   total_queue_size_aligned, DMA_TO_DEVICE);
+	ipu7_dma_sync_single(adev, syscom->queue_mem_dma_addr,
+			     total_queue_size_aligned);
 
 	return 0;
 }
@@ -288,20 +292,19 @@ EXPORT_SYMBOL_NS_GPL(ipu7_boot_init_boot_config, INTEL_IPU7);
 void ipu7_boot_release_boot_config(struct ipu7_bus_device *adev)
 {
 	struct ipu7_syscom_context *syscom = adev->syscom;
-	struct device *dev = &adev->auxdev.dev;
 
 	if (syscom->queue_mem) {
-		dma_free_attrs(dev, syscom->queue_mem_size,
-			       syscom->queue_mem,
-			       syscom->queue_mem_dma_addr, 0);
+		ipu7_dma_free(adev, syscom->queue_mem_size,
+			      syscom->queue_mem,
+			      syscom->queue_mem_dma_addr, 0);
 		syscom->queue_mem = NULL;
 		syscom->queue_mem_dma_addr = 0;
 	}
 
 	if (adev->boot_config) {
-		dma_free_attrs(dev, adev->boot_config_size,
-			       adev->boot_config,
-			       adev->boot_config_dma_addr, 0);
+		ipu7_dma_free(adev, adev->boot_config_size,
+			      adev->boot_config,
+			      adev->boot_config_dma_addr, 0);
 		adev->boot_config = NULL;
 		adev->boot_config_dma_addr = 0;
 	}

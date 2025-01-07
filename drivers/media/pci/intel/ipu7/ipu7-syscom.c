@@ -5,6 +5,7 @@
 
 #include <linux/export.h>
 #include <linux/io.h>
+#include <linux/version.h>
 
 #include "abi/ipu7_fw_syscom_abi.h"
 

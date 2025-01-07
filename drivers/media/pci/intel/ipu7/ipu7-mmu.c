@@ -25,6 +25,7 @@
 #include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/vmalloc.h>
+#include <linux/version.h>
 
 #include "ipu7.h"
 #include "ipu7-dma.h"
@@ -212,7 +213,7 @@ static u32 *alloc_l1_pt(struct ipu7_mmu_info *mmu_info)
 	}
 
 	mmu_info->l1_pt_dma = dma >> ISP_PADDR_SHIFT;
-	dev_dbg(mmu_info->dev, "l1 pt %p mapped at %llx\n", pt, dma);
+	dev_dbg(mmu_info->dev, "l1 pt %p mapped at %pad\n", pt, &dma);
 
 	return pt;
 
@@ -237,12 +238,11 @@ static u32 *alloc_l2_pt(struct ipu7_mmu_info *mmu_info)
 	return pt;
 }
 
-static size_t l2_unmap(struct ipu7_mmu_info *mmu_info, unsigned long iova,
-		       phys_addr_t dummy, size_t size)
+static void l2_unmap(struct ipu7_mmu_info *mmu_info, unsigned long iova,
+		     phys_addr_t dummy, size_t size)
 {
-	unsigned int l2_idx;
 	unsigned int l2_entries;
-	size_t unmapped = 0;
+	unsigned int l2_idx;
 	unsigned long flags;
 	u32 l1_idx;
 	u32 *l2_pt;
@@ -251,41 +251,40 @@ static size_t l2_unmap(struct ipu7_mmu_info *mmu_info, unsigned long iova,
 	for (l1_idx = iova >> ISP_L1PT_SHIFT;
 	     size > 0 && l1_idx < ISP_L1PT_PTES; l1_idx++) {
 		dev_dbg(mmu_info->dev,
-			"unmapping l2 page table for l1 index %u (iova 0x%8.8lx)\n",
+			"unmapping l2 pgtable (l1 index %u (iova 0x%8.8lx))\n",
 			l1_idx, iova);
 
 		if (mmu_info->l1_pt[l1_idx] == mmu_info->dummy_l2_pteval) {
-			spin_unlock_irqrestore(&mmu_info->lock, flags);
 			dev_err(mmu_info->dev,
-				"unmap iova 0x%8.8lx l1 idx %u which was not mapped\n",
+				"unmap not mapped iova 0x%8.8lx l1 index %u\n",
 				iova, l1_idx);
-			return unmapped << ISP_PAGE_SHIFT;
+			continue;
 		}
 		l2_pt = mmu_info->l2_pts[l1_idx];
 
 		l2_entries = 0;
 		for (l2_idx = (iova & ISP_L2PT_MASK) >> ISP_L2PT_SHIFT;
 		     size > 0 && l2_idx < ISP_L2PT_PTES; l2_idx++) {
+			phys_addr_t pteval = TBL_PHYS_ADDR(l2_pt[l2_idx]);
+
 			dev_dbg(mmu_info->dev,
-				"unmap l2 index %u with pteval 0x%10.10llx\n",
-				l2_idx, TBL_PHYS_ADDR(l2_pt[l2_idx]));
+				"unmap l2 index %u with pteval 0x%p\n",
+				l2_idx, &pteval);
 			l2_pt[l2_idx] = mmu_info->dummy_page_pteval;
 
 			iova += ISP_PAGE_SIZE;
 			size -= ISP_PAGE_SIZE;
+
 			l2_entries++;
 		}
 
-		if (l2_entries) {
-			clflush_cache_range(&l2_pt[l2_idx - l2_entries],
-					    sizeof(l2_pt[0]) * l2_entries);
-			unmapped += l2_entries;
-		}
+		WARN_ON_ONCE(!l2_entries);
+		clflush_cache_range(&l2_pt[l2_idx - l2_entries],
+				    sizeof(l2_pt[0]) * l2_entries);
 	}
 
+	WARN_ON_ONCE(size);
 	spin_unlock_irqrestore(&mmu_info->lock, flags);
-
-	return unmapped << ISP_PAGE_SHIFT;
 }
 
 static int l2_map(struct ipu7_mmu_info *mmu_info, unsigned long iova,
@@ -293,10 +292,10 @@ static int l2_map(struct ipu7_mmu_info *mmu_info, unsigned long iova,
 {
 	struct device *dev = mmu_info->dev;
 	unsigned int l2_entries;
-	size_t mapped_size = 0;
 	u32 *l2_pt, *l2_virt;
 	unsigned int l2_idx;
 	unsigned long flags;
+	size_t mapped = 0;
 	dma_addr_t dma;
 	u32 l1_entry;
 	u32 l1_idx;
@@ -317,8 +316,6 @@ static int l2_map(struct ipu7_mmu_info *mmu_info, unsigned long iova,
 			if (likely(!l2_virt)) {
 				l2_virt = alloc_l2_pt(mmu_info);
 				if (!l2_virt) {
-					spin_unlock_irqrestore(&mmu_info->lock,
-							       flags);
 					err = -ENOMEM;
 					goto error;
 				}
@@ -328,8 +325,6 @@ static int l2_map(struct ipu7_mmu_info *mmu_info, unsigned long iova,
 			if (!dma) {
 				dev_err(dev, "Failed to map l2pt page\n");
 				free_page((unsigned long)l2_virt);
-
-				spin_unlock_irqrestore(&mmu_info->lock, flags);
 				err = -EINVAL;
 				goto error;
 			}
@@ -357,15 +352,15 @@ static int l2_map(struct ipu7_mmu_info *mmu_info, unsigned long iova,
 
 			iova += ISP_PAGE_SIZE;
 			paddr += ISP_PAGE_SIZE;
-			mapped_size += ISP_PAGE_SIZE;
+			mapped += ISP_PAGE_SIZE;
 			size -= ISP_PAGE_SIZE;
 
 			l2_entries++;
 		}
 
-		if (l2_entries)
-			clflush_cache_range(&l2_pt[l2_idx - l2_entries],
-					    sizeof(l2_pt[0]) * l2_entries);
+		WARN_ON_ONCE(!l2_entries);
+		clflush_cache_range(&l2_pt[l2_idx - l2_entries],
+				    sizeof(l2_pt[0]) * l2_entries);
 	}
 
 	spin_unlock_irqrestore(&mmu_info->lock, flags);
@@ -373,36 +368,36 @@ static int l2_map(struct ipu7_mmu_info *mmu_info, unsigned long iova,
 	return 0;
 
 error:
+	spin_unlock_irqrestore(&mmu_info->lock, flags);
 	/* unroll mapping in case something went wrong */
-	if (size && mapped_size)
-		l2_unmap(mmu_info, iova - mapped_size, paddr - mapped_size,
-			 mapped_size);
+	if (mapped)
+		l2_unmap(mmu_info, iova - mapped, paddr - mapped, mapped);
 
 	return err;
 }
 
-static int __ipu_mmu_map(struct ipu7_mmu_info *mmu_info, unsigned long iova,
-			 phys_addr_t paddr, size_t size)
+static int __ipu7_mmu_map(struct ipu7_mmu_info *mmu_info, unsigned long iova,
+			  phys_addr_t paddr, size_t size)
 {
 	u32 iova_start = round_down(iova, ISP_PAGE_SIZE);
 	u32 iova_end = ALIGN(iova + size, ISP_PAGE_SIZE);
 
 	dev_dbg(mmu_info->dev,
-		"mapping iova 0x%8.8x--0x%8.8x, size %zu at paddr 0x%10.10llx\n",
-		iova_start, iova_end, size, paddr);
+		"mapping iova 0x%8.8x--0x%8.8x, size %zu at paddr %pap\n",
+		iova_start, iova_end, size, &paddr);
 
 	return l2_map(mmu_info, iova_start, paddr, size);
 }
 
-static size_t __ipu_mmu_unmap(struct ipu7_mmu_info *mmu_info,
-			      unsigned long iova, size_t size)
+static void __ipu7_mmu_unmap(struct ipu7_mmu_info *mmu_info,
+			     unsigned long iova, size_t size)
 {
-	return l2_unmap(mmu_info, iova, 0, size);
+	l2_unmap(mmu_info, iova, 0, size);
 }
 
 static int allocate_trash_buffer(struct ipu7_mmu *mmu)
 {
-	unsigned int n_pages = PHYS_PFN(PAGE_ALIGN(IPU_MMUV2_TRASH_RANGE));
+	unsigned int n_pages = PFN_UP(IPU_MMUV2_TRASH_RANGE);
 	unsigned long iova_addr;
 	struct iova *iova;
 	unsigned int i;
@@ -597,11 +592,12 @@ static struct ipu7_mmu_info *ipu7_mmu_alloc(struct ipu7_device *isp)
 
 	if (isp->secure_mode) {
 		mmu_info->aperture_start = IPU_FW_CODE_REGION_END;
-		mmu_info->aperture_end = DMA_BIT_MASK(IPU_MMU_ADDR_BITS);
+		mmu_info->aperture_end =
+			(dma_addr_t)DMA_BIT_MASK(IPU_MMU_ADDR_BITS);
 	} else {
 		mmu_info->aperture_start = IPU_FW_CODE_REGION_START;
 		mmu_info->aperture_end =
-			DMA_BIT_MASK(IPU_MMU_ADDR_BITS_NON_SECURE);
+			(dma_addr_t)DMA_BIT_MASK(IPU_MMU_ADDR_BITS_NON_SECURE);
 	}
 
 	mmu_info->pgsize_bitmap = SZ_4K;
@@ -699,8 +695,8 @@ phys_addr_t ipu7_mmu_iova_to_phys(struct ipu7_mmu_info *mmu_info,
 	return phy_addr;
 }
 
-size_t ipu7_mmu_unmap(struct ipu7_mmu_info *mmu_info, unsigned long iova,
-		      size_t size)
+void ipu7_mmu_unmap(struct ipu7_mmu_info *mmu_info, unsigned long iova,
+		    size_t size)
 {
 	unsigned int min_pagesz;
 
@@ -718,10 +714,10 @@ size_t ipu7_mmu_unmap(struct ipu7_mmu_info *mmu_info, unsigned long iova,
 		dev_err(mmu_info->dev,
 			"unaligned: iova 0x%lx size 0x%zx min_pagesz 0x%x\n",
 			iova, size, min_pagesz);
-		return -EINVAL;
+		return;
 	}
 
-	return __ipu_mmu_unmap(mmu_info, iova, size);
+	__ipu7_mmu_unmap(mmu_info, iova, size);
 }
 
 int ipu7_mmu_map(struct ipu7_mmu_info *mmu_info, unsigned long iova,
@@ -750,7 +746,7 @@ int ipu7_mmu_map(struct ipu7_mmu_info *mmu_info, unsigned long iova,
 	dev_dbg(mmu_info->dev, "map: iova 0x%lx pa %pa size 0x%zx\n",
 		iova, &paddr, size);
 
-	return  __ipu_mmu_map(mmu_info, iova, paddr, size);
+	return __ipu7_mmu_map(mmu_info, iova, paddr, size);
 }
 
 static void ipu7_mmu_destroy(struct ipu7_mmu *mmu)
@@ -787,6 +783,7 @@ static void ipu7_mmu_destroy(struct ipu7_mmu *mmu)
 		}
 	}
 
+	vfree(mmu_info->l2_pts);
 	free_dummy_page(mmu_info);
 	dma_unmap_single(mmu_info->dev, TBL_PHYS_ADDR(mmu_info->l1_pt_dma),
 			 PAGE_SIZE, DMA_BIDIRECTIONAL);
@@ -856,7 +853,3 @@ void ipu7_mmu_cleanup(struct ipu7_mmu *mmu)
 	put_iova_domain(&dmap->iovad);
 	kfree(dmap);
 }
-
-MODULE_AUTHOR("Bingbu Cao <bingbu.cao@intel.com>");
-MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Intel ipu mmu driver");

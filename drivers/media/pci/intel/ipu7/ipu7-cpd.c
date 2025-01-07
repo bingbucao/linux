@@ -10,6 +10,7 @@
 #include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/types.h>
+#include <linux/version.h>
 
 #include "ipu7.h"
 #include "ipu7-cpd.h"

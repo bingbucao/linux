@@ -218,7 +218,6 @@ struct ipu7_mmu_info;
 #define IPU7P5_PS_ZLX_FW_RD_NUM			16
 #define IPU7P5_PS_ZLX_FW_WR_NUM			10
 
-/* IPU8 for NVL */
 /* IS MMU Cmd RD */
 #define IPU8_IS_MMU_FW_RD_OFFSET		0x270000
 #define IPU8_IS_MMU_FW_RD_STREAM_NUM		3
@@ -408,8 +407,8 @@ int ipu7_mmu_hw_init(struct ipu7_mmu *mmu);
 void ipu7_mmu_hw_cleanup(struct ipu7_mmu *mmu);
 int ipu7_mmu_map(struct ipu7_mmu_info *mmu_info, unsigned long iova,
 		 phys_addr_t paddr, size_t size);
-size_t ipu7_mmu_unmap(struct ipu7_mmu_info *mmu_info, unsigned long iova,
-		      size_t size);
+void ipu7_mmu_unmap(struct ipu7_mmu_info *mmu_info, unsigned long iova,
+		    size_t size);
 phys_addr_t ipu7_mmu_iova_to_phys(struct ipu7_mmu_info *mmu_info,
 				  dma_addr_t iova);
 #endif

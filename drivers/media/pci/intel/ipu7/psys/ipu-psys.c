@@ -19,6 +19,7 @@
 #include <linux/uaccess.h>
 #include <linux/vmalloc.h>
 #include <linux/dma-mapping.h>
+#include <linux/version.h>
 
 #include <uapi/linux/ipu7-psys.h>
 
@@ -27,6 +28,7 @@
 #include "ipu7-bus.h"
 #include "ipu7-buttress.h"
 #include "ipu7-cpd.h"
+#include "ipu7-dma.h"
 #include "ipu7-fw-psys.h"
 #include "ipu7-psys.h"
 #include "ipu7-platform-regs.h"
@@ -178,30 +180,42 @@ static struct sg_table *ipu7_dma_buf_map(struct dma_buf_attachment *attach,
 					 enum dma_data_direction dir)
 {
 	struct ipu7_dma_buf_attach *ipu7_attach = attach->priv;
+	struct pci_dev *pdev = to_pci_dev(attach->dev);
+	struct ipu7_device *isp = pci_get_drvdata(pdev);
+	struct ipu7_bus_device *adev = isp->psys;
 	unsigned long attrs;
 	int ret;
 
 	attrs = DMA_ATTR_SKIP_CPU_SYNC;
-	ret = dma_map_sgtable(attach->dev, ipu7_attach->sgt, dir, attrs);
-	if (ret < 0) {
-		dev_err(attach->dev, "buf map failed\n");
+	ret = dma_map_sgtable(&pdev->dev, ipu7_attach->sgt, dir, attrs);
+	if (ret) {
+		dev_err(attach->dev, "pci buf map failed\n");
 		return ERR_PTR(-EIO);
 	}
 
-	/*
-	 * Initial cache flush to avoid writing dirty pages for buffers which
-	 * are later marked as IPU_BUFFER_FLAG_NO_FLUSH.
-	 */
-	dma_sync_sgtable_for_device(attach->dev, ipu7_attach->sgt,
-				    DMA_BIDIRECTIONAL);
+	dma_sync_sgtable_for_device(&pdev->dev, ipu7_attach->sgt, dir);
+
+	ret = ipu7_dma_map_sgtable(adev, ipu7_attach->sgt, dir, 0);
+	if (ret) {
+		dev_err(attach->dev, "ipu7 buf map failed\n");
+		return ERR_PTR(-EIO);
+	}
+
+	ipu7_dma_sync_sgtable(adev, ipu7_attach->sgt);
 
 	return ipu7_attach->sgt;
 }
 
 static void ipu7_dma_buf_unmap(struct dma_buf_attachment *attach,
-			       struct sg_table *sg, enum dma_data_direction dir)
+			       struct sg_table *sgt,
+			       enum dma_data_direction dir)
 {
-	dma_unmap_sgtable(attach->dev, sg, dir, DMA_ATTR_SKIP_CPU_SYNC);
+	struct pci_dev *pdev = to_pci_dev(attach->dev);
+	struct ipu7_device *isp = pci_get_drvdata(pdev);
+	struct ipu7_bus_device *adev = isp->psys;
+
+	ipu7_dma_unmap_sgtable(adev, sgt, dir, DMA_ATTR_SKIP_CPU_SYNC);
+	dma_unmap_sgtable(&pdev->dev, sgt, dir, 0);
 }
 
 static int ipu7_dma_buf_mmap(struct dma_buf *dbuf, struct vm_area_struct *vma)
@@ -306,6 +320,9 @@ static void ipu7_psys_put_graph_id(struct ipu7_psys_fh *fh)
 static void ipu7_psys_stream_deinit(struct ipu7_psys_stream *ip,
 				    struct ipu7_bus_device *adev)
 {
+	struct ipu_psys_task_ack *ack;
+	struct ipu_psys_task_ack *event;
+	struct ipu_psys_task_ack *tmp;
 	u8 i;
 
 	mutex_destroy(&ip->event_mutex);
@@ -314,11 +331,20 @@ static void ipu7_psys_stream_deinit(struct ipu7_psys_stream *ip,
 	for (i = 0; i < MAX_TASK_REQUEST_QUEUE_SIZE; i++) {
 		if (ip->task_queue[i].msg_task) {
 			ip->task_queue[i].available = 0;
-			dma_free_attrs(&adev->auxdev.dev,
-				       sizeof(struct ipu7_msg_task),
-				       ip->task_queue[i].msg_task,
-				       ip->task_queue[i].task_dma_addr, 0);
+			ipu7_dma_free(adev, sizeof(struct ipu7_msg_task),
+				      ip->task_queue[i].msg_task,
+				      ip->task_queue[i].task_dma_addr, 0);
 		}
+	}
+
+	list_for_each_entry_safe(event, tmp, &ip->event_list, list) {
+		list_del(&event->list);
+		kfree(event);
+	}
+
+	list_for_each_entry_safe(ack, tmp, &ip->ack_list, list) {
+		list_del(&ack->list);
+		kfree(ack);
 	}
 }
 
@@ -326,40 +352,52 @@ static int ipu7_psys_stream_init(struct ipu7_psys_stream *ip,
 				 struct ipu7_bus_device *adev)
 {
 	struct device *dev = &adev->auxdev.dev;
+	struct ipu_psys_task_ack *event;
+	struct ipu_psys_task_ack *tmp;
 	u8 i, j;
 
-	ip->event_read_index = 0;
-	ip->event_write_index = 0;
+	INIT_LIST_HEAD(&ip->event_list);
+	INIT_LIST_HEAD(&ip->ack_list);
+
+	for (i = 0; i < TASK_EVENT_QUEUE_SIZE; i++) {
+		event = kzalloc(sizeof(*event), GFP_KERNEL);
+		if (!event)
+			goto alloc_fail;
+
+		list_add(&event->list, &ip->event_list);
+	}
 
 	for (i = 0; i < MAX_TASK_REQUEST_QUEUE_SIZE; i++) {
 		ip->task_queue[i].available = 1;
 		ip->task_queue[i].msg_task =
-			dma_alloc_attrs(dev, sizeof(struct ipu7_msg_task),
-					&ip->task_queue[i].task_dma_addr,
-					GFP_KERNEL, 0);
-
+			ipu7_dma_alloc(adev, sizeof(struct ipu7_msg_task),
+				       &ip->task_queue[i].task_dma_addr,
+				       GFP_KERNEL, 0);
 		if (!ip->task_queue[i].msg_task) {
 			dev_err(dev, "Failed to allocate msg task.\n");
-			goto allocate_fail;
+			goto dma_alloc_fail;
 		}
 	}
-
-	for (i = 0; i < MAX_TASK_EVENT_QUEUE_SIZE; i++)
-		ip->event_queue[i].available = 1;
 
 	init_completion(&ip->graph_open);
 	init_completion(&ip->graph_close);
 
 	return 0;
 
-allocate_fail:
+dma_alloc_fail:
 	for (j = 0; j < i; j++) {
 		if (ip->task_queue[j].msg_task) {
 			ip->task_queue[j].available = 0;
-			dma_free_attrs(dev, sizeof(struct ipu7_msg_task),
-				       ip->task_queue[j].msg_task,
-				       ip->task_queue[j].task_dma_addr, 0);
+			ipu7_dma_free(adev, sizeof(struct ipu7_msg_task),
+				      ip->task_queue[j].msg_task,
+				      ip->task_queue[j].task_dma_addr, 0);
 		}
+	}
+
+alloc_fail:
+	list_for_each_entry_safe(event, tmp, &ip->event_list, list) {
+		list_del(&event->list);
+		kfree(event);
 	}
 
 	return -ENOMEM;
@@ -450,7 +488,8 @@ alloc_failed:
 	return ret;
 }
 
-static inline void ipu7_psys_kbuf_unmap(struct ipu7_psys_kbuffer *kbuf)
+static inline void ipu7_psys_kbuf_unmap(struct ipu7_psys_fh *fh,
+					struct ipu7_psys_kbuffer *kbuf)
 {
 	if (!kbuf)
 		return;
@@ -462,6 +501,10 @@ static inline void ipu7_psys_kbuf_unmap(struct ipu7_psys_kbuffer *kbuf)
 		iosys_map_set_vaddr(&dmap, kbuf->kaddr);
 		dma_buf_vunmap_unlocked(kbuf->dbuf, &dmap);
 	}
+
+	if (!kbuf->userptr)
+		ipu7_dma_unmap_sgtable(fh->psys->adev, kbuf->sgt,
+				       DMA_BIDIRECTIONAL, 0);
 
 	if (kbuf->sgt)
 		dma_buf_unmap_attachment_unlocked(kbuf->db_attach,
@@ -492,7 +535,7 @@ static int ipu7_psys_release(struct inode *inode, struct file *file)
 
 			/* Unmap and release buffers */
 			if (kbuf->dbuf && dba) {
-				ipu7_psys_kbuf_unmap(kbuf);
+				ipu7_psys_kbuf_unmap(fh, kbuf);
 			} else {
 				if (dba)
 					ipu7_psys_put_userpages(dba->priv);
@@ -615,7 +658,7 @@ static int ipu7_psys_unmapbuf_locked(int fd, struct ipu7_psys_fh *fh,
 	}
 
 	/* From now on it is not safe to use this kbuffer */
-	ipu7_psys_kbuf_unmap(kbuf);
+	ipu7_psys_kbuf_unmap(fh, kbuf);
 
 	list_del(&kbuf->list);
 
@@ -630,11 +673,10 @@ static int ipu7_psys_unmapbuf_locked(int fd, struct ipu7_psys_fh *fh,
 static int ipu7_psys_mapbuf_locked(int fd, struct ipu7_psys_fh *fh,
 				   struct ipu7_psys_kbuffer *kbuf)
 {
-	struct device *dev = &fh->psys->adev->auxdev.dev;
+	struct ipu7_psys *psys = fh->psys;
+	struct device *dev = &psys->adev->isp->pdev->dev;
 	struct dma_buf *dbuf;
-	struct iosys_map dmap = {
-		.is_iomem = false,
-	};
+	struct iosys_map dmap;
 	int ret;
 
 	dbuf = dma_buf_get(fd);
@@ -704,12 +746,22 @@ static int ipu7_psys_mapbuf_locked(int fd, struct ipu7_psys_fh *fh,
 		goto kbuf_map_fail;
 	}
 
+	if (!kbuf->userptr) {
+		ret = ipu7_dma_map_sgtable(psys->adev, kbuf->sgt,
+					   DMA_BIDIRECTIONAL, 0);
+		if (ret) {
+			dev_dbg(dev, "ipu7 buf map failed\n");
+			goto kbuf_map_fail;
+		}
+	}
+
 	kbuf->dma_addr = sg_dma_address(kbuf->sgt->sgl);
 
 	/* no need vmap for imported dmabufs */
 	if (!kbuf->userptr)
 		goto mapbuf_end;
 
+	dmap.is_iomem = false;
 	ret = dma_buf_vmap_unlocked(kbuf->dbuf, &dmap);
 	if (ret) {
 		dev_err(dev, "dma buf vmap failed\n");
@@ -717,18 +769,23 @@ static int ipu7_psys_mapbuf_locked(int fd, struct ipu7_psys_fh *fh,
 	}
 	kbuf->kaddr = dmap.vaddr;
 
-	dev_dbg(dev, "%s kbuf %p fd %d with len %llu mapped\n",
-		__func__, kbuf, fd, kbuf->len);
 mapbuf_end:
+	dev_dbg(dev, "%s %s kbuf %p fd %d with len %llu mapped\n",
+		__func__, kbuf->kaddr ? "private" : "imported", kbuf, fd,
+		kbuf->len);
 	kbuf->valid = true;
 
 	return 0;
 
 kbuf_map_fail:
-	if (!IS_ERR_OR_NULL(kbuf->sgt))
+	if (!IS_ERR_OR_NULL(kbuf->sgt)) {
+		if (!kbuf->userptr)
+			ipu7_dma_unmap_sgtable(psys->adev, kbuf->sgt,
+					       DMA_BIDIRECTIONAL, 0);
 		dma_buf_unmap_attachment_unlocked(kbuf->db_attach,
 						  kbuf->sgt,
 						  DMA_BIDIRECTIONAL);
+	}
 	dma_buf_detach(kbuf->dbuf, kbuf->db_attach);
 
 attach_fail:
@@ -748,12 +805,12 @@ static long ipu7_psys_mapbuf(int fd, struct ipu7_psys_fh *fh)
 	long ret;
 	struct ipu7_psys_kbuffer *kbuf;
 
+	dev_dbg(&fh->psys->adev->auxdev.dev, "IOC_MAPBUF\n");
+
 	mutex_lock(&fh->mutex);
 	kbuf = ipu7_psys_lookup_kbuffer(fh, fd);
 	ret = ipu7_psys_mapbuf_locked(fd, fh, kbuf);
 	mutex_unlock(&fh->mutex);
-
-	dev_dbg(&fh->psys->adev->auxdev.dev, "IOC_MAPBUF ret %ld\n", ret);
 
 	return ret;
 }
@@ -763,6 +820,8 @@ static long ipu7_psys_unmapbuf(int fd, struct ipu7_psys_fh *fh)
 	struct device *dev = &fh->psys->adev->auxdev.dev;
 	struct ipu7_psys_kbuffer *kbuf;
 	long ret;
+
+	dev_dbg(dev, "IOC_UNMAPBUF\n");
 
 	mutex_lock(&fh->mutex);
 	kbuf = ipu7_psys_lookup_kbuffer(fh, fd);
@@ -774,8 +833,6 @@ static long ipu7_psys_unmapbuf(int fd, struct ipu7_psys_fh *fh)
 	}
 	ret = ipu7_psys_unmapbuf_locked(fd, fh, kbuf);
 	mutex_unlock(&fh->mutex);
-
-	dev_dbg(dev, "IOC_UNMAPBUF\n");
 
 	return ret;
 }
@@ -879,7 +936,6 @@ ipu7_psys_get_task_queue(struct ipu7_psys_stream *ip,
 {
 	struct ipu_psys_task_queue *tq = NULL;
 	struct device *dev = &ip->fh->psys->dev;
-	struct device *adev = &ip->fh->psys->adev->auxdev.dev;
 	struct ipu7_psys_kbuffer *kbuf = NULL;
 	u32 i, j;
 	int fd, prevfd = -1;
@@ -913,13 +969,13 @@ ipu7_psys_get_task_queue(struct ipu7_psys_stream *ip,
 					+ tq->task_buffers[j].term_buf.data_offset;
 
 				if ((tq->task_buffers[j].term_buf.flags &
-				     IPU_BUFFER_FLAG_NO_FLUSH) ||
-				    prevfd == fd)
+				     IPU_BUFFER_FLAG_NO_FLUSH) || prevfd == fd)
 					continue;
 
 				prevfd = fd;
-				dma_sync_sgtable_for_device(adev, kbuf->sgt,
-							    DMA_BIDIRECTIONAL);
+				if (kbuf->kaddr)
+					clflush_cache_range(kbuf->kaddr,
+							    kbuf->len);
 			}
 
 			ip->task_queue[i].available = 0U;
@@ -983,7 +1039,7 @@ static unsigned int ipu7_psys_poll(struct file *file,
 	poll_wait(file, &fh->wait, wait);
 
 	mutex_lock(&ip->event_mutex);
-	if (!ip->event_queue[ip->event_read_index].available)
+	if (!list_empty(&ip->ack_list))
 		res = POLLIN;
 	mutex_unlock(&ip->event_mutex);
 
@@ -1139,10 +1195,11 @@ static int psys_runtime_pm_suspend(struct device *dev)
 	if (!psys)
 		return 0;
 
-	if (!psys->ready)
-		return 0;
-
 	spin_lock_irqsave(&psys->ready_lock, flags);
+	if (!psys->ready) {
+		spin_unlock_irqrestore(&psys->ready_lock, flags);
+		return 0;
+	}
 	psys->ready = 0;
 	spin_unlock_irqrestore(&psys->ready_lock, flags);
 
@@ -1168,7 +1225,16 @@ static int psys_resume(struct device *dev)
 
 static int psys_suspend(struct device *dev)
 {
-	return 0;
+	struct ipu7_psys *psys = dev_get_drvdata(dev);
+	unsigned long flags;
+	int ret = 0;
+
+	spin_lock_irqsave(&psys->ready_lock, flags);
+	if (psys->ready)
+		ret = -EBUSY;
+	spin_unlock_irqrestore(&psys->ready_lock, flags);
+
+	return ret;
 }
 
 static const struct dev_pm_ops psys_pm_ops = {

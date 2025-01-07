@@ -19,6 +19,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/scatterlist.h>
 #include <linux/types.h>
+#include <linux/version.h>
 
 #include "ipu7.h"
 #include "ipu7-bus.h"
@@ -570,8 +571,17 @@ int ipu_buttress_start_tsc_sync(struct ipu7_device *isp)
 	u32 val;
 
 	return 0;
-	if (is_ipu8(isp->hw_ver))
-		return 0;
+	if (is_ipu8(isp->hw_ver)) {
+		for (i = 0; i < BUTTRESS_TSC_SYNC_RESET_TRIAL_MAX; i++) {
+			val = readl(base + BUTTRESS_REG_PB_TIMESTAMP_VALID);
+			if (val == 1)
+				return 0;
+			usleep_range(40, 50);
+		}
+
+		dev_err(&isp->pdev->dev, "PB HH sync failed (valid %u)\n", val);
+		return -ETIMEDOUT;
+	}
 
 	if (is_ipu7p5(isp->hw_ver)) {
 		val = readl(base + BUTTRESS_REG_TSC_CTL);
@@ -681,7 +691,7 @@ static void ipu_buttress_setup(struct ipu7_device *isp)
 	else
 		writel(0x100, isp->pb_base + BAR2_MISC_CONFIG);
 
-	if (is_ipu7p5(isp->hw_ver)) {
+	if (!is_ipu7(isp->hw_ver)) {
 		writel(BIT(14), isp->pb_base + TLBID_HASH_ENABLE_63_32);
 		writel(BIT(9), isp->pb_base + TLBID_HASH_ENABLE_95_64);
 		dev_dbg(dev, "PTL TLBID_HASH %x %x\n",
